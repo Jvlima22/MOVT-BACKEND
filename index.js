@@ -11,6 +11,9 @@ const emailUser = process.env.EMAIL_USER;
 const emailPass = process.env.EMAIL_PASS;
 // const jwtSecret = process.env.JWT_SECRET || 'sua_chave_secreta_padrao'; // Removido
 
+console.log('EMAIL_USER carregado:', emailUser ? '******' : 'NÃO DEFINIDO');
+console.log('EMAIL_PASS carregado:', emailPass ? '******' : 'NÃO DEFINIDO');
+
 // Conexão direta com PostgreSQL usando a URL do banco de dados
 const sql = postgres(databaseUrl, {
   ssl: 'require',
@@ -20,11 +23,16 @@ const sql = postgres(databaseUrl, {
 
 // Configuração do Nodemailer
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // Você pode mudar para outro serviço ou configurar host/port
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // Use 'true' se a porta for 465, 'false' para 587 (TLS)
   auth: {
     user: emailUser,
     pass: emailPass,
   },
+  tls: {
+    rejectUnauthorized: false // Pode ser necessário em alguns ambientes de desenvolvimento
+  }
 });
 
 // Função para gerar um código de verificação aleatório
@@ -88,6 +96,7 @@ function verifyToken(req, res, next) {
 
 // Rota de Registro de Usuário
 app.post('/register', async (req, res) => {
+  console.log('Rota /register atingida');
   console.log('Dados recebidos do frontend (req.body):', req.body);
   const { nome, email, senha, cpf_cnpj, data_nascimento, telefone, tipo_documento } = req.body; // Campos expandidos
 
@@ -178,6 +187,7 @@ app.post('/register', async (req, res) => {
 
 // Rota de Autenticação (Login)
 app.post('/login', async (req, res) => {
+  console.log('Rota /login atingida');
   const { email, senha, sessionId: providedSessionId } = req.body;
 
   if (!email || !senha) {
@@ -216,6 +226,7 @@ app.post('/login', async (req, res) => {
 
 // Nova Rota para Reenviar Código de Verificação
 app.post('/user/send-verification', verifyToken, async (req, res) => {
+  console.log('Rota /user/send-verification atingida');
   const userId = req.userId; // ID do usuário do middleware verifyToken
 
   try {
