@@ -2,45 +2,39 @@ require('dotenv').config();
 const express = require('express');
 const postgres = require('postgres');
 const bcrypt = require('bcrypt');
-// const jwt = require('jsonwebtoken'); // Removido
 const { v4: uuidv4 } = require('uuid');
-const nodemailer = require('nodemailer'); // Adicionado nodemailer
+const nodemailer = require('nodemailer');
 
 const databaseUrl = process.env.DATABASE_URL;
 const emailUser = process.env.EMAIL_USER;
 const emailPass = process.env.EMAIL_PASS;
-// const jwtSecret = process.env.JWT_SECRET || 'sua_chave_secreta_padrao'; // Removido
 
 console.log('EMAIL_USER carregado:', emailUser ? '******' : 'NÃO DEFINIDO');
 console.log('EMAIL_PASS carregado:', emailPass ? '******' : 'NÃO DEFINIDO');
 
-// Conexão direta com PostgreSQL usando a URL do banco de dados
 const sql = postgres(databaseUrl, {
   ssl: 'require',
-  max: 1, // Limitar conexões para evitar sobrecarga em testes simples
-  prepare: false // Adicionado para resolver problemas de cache de plano de consulta
+  max: 1,
+  prepare: false
 });
 
-// Configuração do Nodemailer
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
-  secure: false, // Use 'true' se a porta for 465, 'false' para 587 (TLS)
+  secure: false,
   auth: {
     user: emailUser,
     pass: emailPass,
   },
   tls: {
-    rejectUnauthorized: false // Pode ser necessário em alguns ambientes de desenvolvimento
+    rejectUnauthorized: false
   }
 });
 
-// Função para gerar um código de verificação aleatório
 function generateVerificationCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString(); // Código de 6 dígitos
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Função para enviar o e-mail de verificação
 async function sendVerificationEmail(toEmail, verificationCode) {
   const mailOptions = {
     from: emailUser,
@@ -71,21 +65,21 @@ const port = 3000;
 
 app.use(express.json());
 
-// Middleware para verificar o token de sessão (session_id)
+// Middleware de verificação de sessão
 function verifyToken(req, res, next) {
-  const sessionId = req.headers['authorization']; // Ou um header customizado como 'x-session-id'
-
-  if (!sessionId) {
-    return res.status(403).json({ message: 'Token de sessão não fornecido.' });
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(403).json({ message: 'Token de sessão não fornecido ou formato inválido.' });
   }
 
-  // Buscar o usuário pelo session_id
-  sql`SELECT id_us FROM usuarios WHERE session_id = ${sessionId.split(' ')[1]}`
+  const sessionId = authHeader.split(' ')[1];
+
+  sql`SELECT id_us FROM usuarios WHERE session_id = ${sessionId}`
     .then(users => {
       if (users.length === 0) {
         return res.status(401).json({ message: 'Token de sessão inválido ou expirado.' });
       }
-      req.userId = users[0].id_us; // Adiciona o ID do usuário à requisição
+      req.userId = users[0].id_us; // id_us é um INTEGER aqui, conforme seu schema de usuarios
       next();
     })
     .catch(error => {
@@ -98,9 +92,8 @@ function verifyToken(req, res, next) {
 app.post('/register', async (req, res) => {
   console.log('Rota /register atingida');
   console.log('Dados recebidos do frontend (req.body):', req.body);
-  const { nome, email, senha, cpf_cnpj, data_nascimento, telefone, tipo_documento } = req.body; // Campos expandidos
+  const { nome, email, senha, cpf_cnpj, data_nascimento, telefone, tipo_documento } = req.body;
 
-  // Validação básica dos campos obrigatórios
   if (!nome || !email || !senha || !cpf_cnpj || !data_nascimento || !telefone) {
     return res.status(400).json({ error: 'Todos os campos são obrigatórios.' });
   }
@@ -125,7 +118,7 @@ app.post('/register', async (req, res) => {
       conditions.push(sql`cnpj = ${userCnpj}`);
     }
 
-    let whereClause = sql`TRUE`; // Padrão para evitar WHERE vazio
+    let whereClause = sql`TRUE`;
     if (conditions.length > 0) {
       whereClause = sql`WHERE ${conditions[0]}`;
       for (let i = 1; i < conditions.length; i++) {
@@ -133,7 +126,6 @@ app.post('/register', async (req, res) => {
       }
     }
 
-    // Verificar se o email, CPF ou CNPJ já estão em uso
     const existingUser = await sql`
       SELECT id_us, email, cpf, cnpj
       FROM usuarios
@@ -141,7 +133,6 @@ app.post('/register', async (req, res) => {
     `;
 
     if (existingUser.length > 0) {
-      // Mensagens de erro mais específicas baseadas no que foi encontrado
       if (existingUser[0].email === email) {
         return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
       } else if (existingUser[0].cpf === userCpf && userCpf !== null) {
@@ -153,25 +144,22 @@ app.post('/register', async (req, res) => {
       }
     }
 
-    const hashedPassword = await bcrypt.hash(senha, 10); // Hash da senha
-    const newSessionId = uuidv4(); // Gera um UUID para o session_id
-    const verificationCode = generateVerificationCode(); // Gera o código de verificação
-    const verificationCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Expira em 15 minutos
+    const hashedPassword = await bcrypt.hash(senha, 10);
+    const newSessionId = uuidv4();
+    const verificationCode = generateVerificationCode();
+    const verificationCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Converte a data de nascimento (DD/MM/AAAA) para o formato TIMESTAMP
     const [day, month, year] = data_nascimento.split('/');
-    const formattedBirthDate = `${year}-${month}-${day} 00:00:00`; // Ex: 2000-01-01 00:00:00
+    const formattedBirthDate = `${year}-${month}-${day} 00:00:00`;
 
     const [newUser] = await sql`
-      INSERT INTO usuarios (nome, username, email, senha, cpf, cnpj, data_nascimento, telefone, createdat, updatedat, session_id, verification_code, email_verified, verification_code_expires_at)
+      INSERT INTO usuarios (nome, username, email, senha, cpf, cnpj, data_nascimento, telefone, created_at, updated_at, session_id, verification_code, email_verified, verification_code_expires_at)
       VALUES (${nome}, ${email}, ${email}, ${hashedPassword}, ${userCpf}, ${userCnpj}, ${formattedBirthDate}, ${telefone}, NOW(), NOW(), ${newSessionId}, ${verificationCode}, FALSE, ${verificationCodeExpiresAt})
       RETURNING id_us, nome, username, email, cpf, cnpj, data_nascimento, telefone, session_id;
     `;
 
-    // Enviar e-mail de verificação após o registro
     const emailSent = await sendVerificationEmail(newUser.email, verificationCode);
     if (!emailSent) {
-      // Opcional: registrar em log que o e-mail falhou, mas ainda retornar sucesso para o registro
       console.warn('Falha ao enviar e-mail de verificação para o novo usuário.');
     }
 
@@ -196,7 +184,7 @@ app.post('/login', async (req, res) => {
 
   try {
     const [user] = await sql`
-      SELECT id_us, email, senha, username, nome, session_id
+      SELECT id_us, email, senha, username, nome, session_id, email_verified
       FROM usuarios
       WHERE email = ${email};
     `;
@@ -205,29 +193,37 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Endereço de e-mail incorreto, tente novamente!' });
     }
 
-    const isPasswordValid = await bcrypt.compare(senha, user.senha); // Compara a senha fornecida com o hash
+    const isPasswordValid = await bcrypt.compare(senha, user.senha);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Senha inválida, tente novamente!' });
     }
 
-    // Adicionar verificação do session_id, se fornecido na requisição
     if (providedSessionId && providedSessionId !== user.session_id) {
       return res.status(401).json({ error: 'Token de sessão inconsistente ou inválido.' });
     }
 
-    // Retornar o session_id existente
-    res.status(200).json({ message: 'Login bem-sucedido!', user: { id: user.id_us, nome: user.nome, username: user.username, email: user.email }, sessionId: user.session_id });
+    res.status(200).json({ 
+      message: 'Login bem-sucedido!', 
+      user: { 
+        id: user.id_us, 
+        nome: user.nome, 
+        username: user.username, 
+        email: user.email,
+        isVerified: user.email_verified
+      }, 
+      sessionId: user.session_id 
+    });
   } catch (error) {
     console.error('Erro ao autenticar usuário:', error);
     res.status(500).json({ error: 'Erro interno do servidor ao autenticar usuário.', details: error.message });
   }
 });
 
-// Nova Rota para Reenviar Código de Verificação
+// Rota para Reenviar Código de Verificação
 app.post('/user/send-verification', verifyToken, async (req, res) => {
   console.log('Rota /user/send-verification atingida');
-  const userId = req.userId; // ID do usuário do middleware verifyToken
+  const userId = req.userId; // userId é um INTEGER aqui
 
   try {
     const [user] = await sql`SELECT email, email_verified FROM usuarios WHERE id_us = ${userId}`;
@@ -240,13 +236,13 @@ app.post('/user/send-verification', verifyToken, async (req, res) => {
     }
 
     const newVerificationCode = generateVerificationCode();
-    const newVerificationCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Expira em 15 minutos
+    const newVerificationCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await sql`
       UPDATE usuarios
       SET verification_code = ${newVerificationCode},
           verification_code_expires_at = ${newVerificationCodeExpiresAt},
-          updatedat = NOW()
+          updated_at = NOW()
       WHERE id_us = ${userId};
     `;
 
@@ -263,10 +259,10 @@ app.post('/user/send-verification', verifyToken, async (req, res) => {
   }
 });
 
-// Nova Rota para Verificar o E-mail
+// Rota para Verificar o E-mail
 app.post('/user/verify', verifyToken, async (req, res) => {
-  const userId = req.userId; // ID do usuário do middleware verifyToken
-  const { code } = req.body; // Código enviado pelo frontend
+  const userId = req.userId; // userId é um INTEGER aqui
+  const { code } = req.body;
 
   if (!code) {
     return res.status(400).json({ error: 'Código de verificação é obrigatório.' });
@@ -292,13 +288,12 @@ app.post('/user/verify', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Código de verificação expirado. Solicite um novo.' });
     }
 
-    // Se tudo estiver correto, verificar o e-mail
     await sql`
       UPDATE usuarios
       SET email_verified = TRUE,
-          verification_code = NULL, -- Limpa o código após o uso
-          verification_code_expires_at = NULL, -- Limpa a expiração
-          updatedat = NOW()
+          verification_code = NULL,
+          verification_code_expires_at = NULL,
+          updated_at = NOW()
       WHERE id_us = ${userId};
     `;
 
@@ -309,9 +304,174 @@ app.post('/user/verify', verifyToken, async (req, res) => {
   }
 });
 
+// Rota para Obter Status da Sessão e Verificação do E-mail
+app.get('/user/session-status', verifyToken, async (req, res) => {
+  console.log('Rota /user/session-status atingida');
+  const userId = req.userId; // userId é um INTEGER aqui
+
+  try {
+    const [user] = await sql`
+      SELECT id_us, email, username, nome, email_verified
+      FROM usuarios
+      WHERE id_us = ${userId};
+    `;
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado para a sessão ativa.' });
+    }
+
+    res.status(200).json({
+      message: 'Sessão ativa.',
+      user: {
+        id: user.id_us,
+        nome: user.nome,
+        username: user.username,
+        email: user.email,
+        isVerified: user.email_verified,
+      },
+    });
+
+  } catch (error) {
+    console.error('Erro ao obter status da sessão:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao obter status da sessão.', details: error.message });
+  }
+});
+
+// --- Rotas para Gerenciamento de Dietas (usando a tabela 'dietas' existente) ---
+
+// Rota: Criar uma nova dieta
+app.post('/api/dietas', verifyToken, async (req, res) => {
+  console.log('Rota POST /api/dietas atingida');
+  const userId = req.userId; // userId é um INTEGER aqui
+  const { 
+    nome, 
+    descricao, 
+    imageurl, 
+    calorias, 
+    tempo_preparo, 
+    gordura, 
+    proteina, 
+    carboidratos,
+    nome_autor,
+    avatar_autor_url
+  } = req.body;
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Nome da dieta é obrigatório.' });
+  }
+
+  try {
+    const [newDieta] = await sql`
+      INSERT INTO dietas (
+        id_us, nome, descricao, imageurl, calorias, tempo_preparo, 
+        gordura, proteina, carboidratos, nome_autor, avatar_autor_url, 
+        createdat, updatedat
+      )
+      VALUES (
+        ${userId}, ${nome}, ${descricao || null}, ${imageurl || null}, ${calorias || null}, 
+        ${tempo_preparo || null}, ${gordura || null}, ${proteina || null}, 
+        ${carboidratos || null}, ${nome_autor || null}, ${avatar_autor_url || null},
+        NOW(), NOW()
+      )
+      RETURNING *;
+    `;
+    res.status(201).json({ message: 'Dieta criada com sucesso!', data: newDieta });
+  } catch (error) {
+    console.error('Erro ao criar dieta:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao criar dieta.', details: error.message });
+  }
+});
+
+// Rota: Listar dietas do usuário
+app.get('/api/dietas', verifyToken, async (req, res) => {
+  console.log('Rota GET /api/dietas atingida');
+  const userId = req.userId; // userId é um INTEGER aqui
+
+  try {
+    const dietas = await sql`
+      SELECT * FROM dietas WHERE id_us = ${userId} ORDER BY createdat DESC;
+    `;
+    res.status(200).json({ data: dietas });
+  } catch (error) {
+    console.error('Erro ao listar dietas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao listar dietas.', details: error.message });
+  }
+});
+
+// Rota: Editar uma dieta
+app.put('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
+  console.log('Rota PUT /api/dietas/:id_dieta atingida');
+  const userId = req.userId; // userId é um INTEGER aqui
+  const { id_dieta } = req.params;
+  const updateFields = req.body;
+
+  try {
+    const [updatedDieta] = await sql`
+      UPDATE dietas
+      SET
+        nome = COALESCE(${updateFields.nome || null}, nome),
+        descricao = COALESCE(${updateFields.descricao || null}, descricao),
+        imageurl = COALESCE(${updateFields.imageurl || null}, imageurl),
+        calorias = COALESCE(${updateFields.calorias || null}, calorias),
+        tempo_preparo = COALESCE(${updateFields.tempo_preparo || null}, tempo_preparo),
+        gordura = COALESCE(${updateFields.gordura || null}, gordura),
+        proteina = COALESCE(${updateFields.proteina || null}, proteina),
+        carboidratos = COALESCE(${updateFields.carboidratos || null}, carboidratos),
+        nome_autor = COALESCE(${updateFields.nome_autor || null}, nome_autor),
+        avatar_autor_url = COALESCE(${updateFields.avatar_autor_url || null}, avatar_autor_url),
+        updatedat = NOW()
+      WHERE id_dieta = ${id_dieta} AND id_us = ${userId}
+      RETURNING *;
+    `;
+
+    if (!updatedDieta) {
+      return res.status(404).json({ error: 'Dieta não encontrada ou você não tem permissão para editá-la.' });
+    }
+    res.status(200).json({ message: 'Dieta atualizada com sucesso!', data: updatedDieta });
+  } catch (error) {
+    console.error('Erro ao editar dieta:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao editar dieta.', details: error.message });
+  }
+});
+
+// Rota: Excluir uma dieta
+app.delete('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
+  console.log('Rota DELETE /api/dietas/:id_dieta atingida');
+  const userId = req.userId; // userId é um INTEGER aqui
+  const { id_dieta } = req.params;
+
+  try {
+    const [deletedDieta] = await sql`
+      DELETE FROM dietas
+      WHERE id_dieta = ${id_dieta} AND id_us = ${userId}
+      RETURNING *;
+    `;
+
+    if (!deletedDieta) {
+      return res.status(404).json({ error: 'Dieta não encontrada ou você não tem permissão para excluí-la.' });
+    }
+    res.status(200).json({ message: 'Dieta excluída com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir dieta:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao excluir dieta.', details: error.message });
+  }
+});
+
+// Rota: Listar todas as refeições do catálogo (mantida, pois pode ser um catálogo geral)
+app.get('/api/meals', verifyToken, async (req, res) => {
+  console.log('Rota GET /api/meals atingida');
+  try {
+    const meals = await sql`
+      SELECT * FROM meals ORDER BY nome_refeicao ASC;
+    `;
+    res.status(200).json({ data: meals });
+  } catch (error) {
+    console.error('Erro ao listar refeições do catálogo:', error);
+    res.status(500).json({ error: 'Erro interno do servidor ao listar refeições.', details: error.message });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
-
-
