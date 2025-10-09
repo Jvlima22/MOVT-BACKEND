@@ -9,9 +9,6 @@ const databaseUrl = process.env.DATABASE_URL;
 const emailUser = process.env.EMAIL_USER;
 const emailPass = process.env.EMAIL_PASS;
 
-console.log('EMAIL_USER carregado:', emailUser ? '******' : 'NÃO DEFINIDO');
-console.log('EMAIL_PASS carregado:', emailPass ? '******' : 'NÃO DEFINIDO');
-
 const sql = postgres(databaseUrl, {
   ssl: 'require',
   max: 1,
@@ -88,7 +85,9 @@ function verifyToken(req, res, next) {
     });
 }
 
-// Rota de Registro de Usuário
+// ------------------- REGISTRO DE USUÁRIO --------------------- //
+
+// ROTA DE REGISTRO
 app.post('/register', async (req, res) => {
   console.log('Rota /register atingida');
   console.log('Dados recebidos do frontend (req.body):', req.body);
@@ -173,7 +172,9 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Rota de Autenticação (Login)
+// --------------------- AUTENTICAÇÃO DE USUÁRIO --------------------- //
+
+// ROTA DE LOGIN
 app.post('/login', async (req, res) => {
   console.log('Rota /login atingida');
   const { email, senha, sessionId: providedSessionId } = req.body;
@@ -220,7 +221,9 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Rota para Reenviar Código de Verificação
+// --------------------- VERIFICAÇÃO DE USUÁRIO --------------------- //
+
+// ROTA DE ENVIO DE CÓDIGO PARA VERIFICAÇÃO DE CONTA
 app.post('/user/send-verification', verifyToken, async (req, res) => {
   console.log('Rota /user/send-verification atingida');
   const userId = req.userId; // userId é um INTEGER aqui
@@ -259,7 +262,7 @@ app.post('/user/send-verification', verifyToken, async (req, res) => {
   }
 });
 
-// Rota para Verificar o E-mail
+// ROTA DE VERIFICAÇÃO DE CONTA
 app.post('/user/verify', verifyToken, async (req, res) => {
   const userId = req.userId; // userId é um INTEGER aqui
   const { code } = req.body;
@@ -304,7 +307,7 @@ app.post('/user/verify', verifyToken, async (req, res) => {
   }
 });
 
-// Rota para Obter Status da Sessão e Verificação do E-mail
+// ROTA PARA OBTER STATUS DA SESSÃO DO USUÁRIO
 app.get('/user/session-status', verifyToken, async (req, res) => {
   console.log('Rota /user/session-status atingida');
   const userId = req.userId; // userId é um INTEGER aqui
@@ -337,23 +340,22 @@ app.get('/user/session-status', verifyToken, async (req, res) => {
   }
 });
 
-// --- Rotas para Gerenciamento de Dietas (usando a tabela 'dietas' existente) ---
+// -------------------------------- DIETAS ---------------------------- //
 
-// Rota: Criar uma nova dieta
+// ROTA PARA CRIAÇÃO DE DIETAS
 app.post('/api/dietas', verifyToken, async (req, res) => {
   console.log('Rota POST /api/dietas atingida');
   const userId = req.userId; // userId é um INTEGER aqui
-  const { 
-    nome, 
-    descricao, 
-    imageurl, 
-    calorias, 
-    tempo_preparo, 
-    gordura, 
-    proteina, 
+  const {
+    nome,
+    descricao,
+    imageurl,
+    calorias,
+    tempo_preparo,
+    gordura,
+    proteina,
     carboidratos,
-    nome_autor,
-    avatar_autor_url
+    categoria
   } = req.body;
 
   if (!nome) {
@@ -363,15 +365,15 @@ app.post('/api/dietas', verifyToken, async (req, res) => {
   try {
     const [newDieta] = await sql`
       INSERT INTO dietas (
-        id_us, nome, descricao, imageurl, calorias, tempo_preparo, 
-        gordura, proteina, carboidratos, nome_autor, avatar_autor_url, 
-        createdat, updatedat
+        id_us, nome, descricao, imageurl, calorias, tempo_preparo,
+        gordura, proteina, carboidratos, nome_autor, avatar_autor_url,
+        createdat, updatedat, categoria
       )
       VALUES (
-        ${userId}, ${nome}, ${descricao || null}, ${imageurl || null}, ${calorias || null}, 
-        ${tempo_preparo || null}, ${gordura || null}, ${proteina || null}, 
+        ${userId}, ${nome}, ${descricao || null}, ${imageurl || null}, ${calorias || null},
+        ${tempo_preparo || null}, ${gordura || null}, ${proteina || null},
         ${carboidratos || null}, ${nome_autor || null}, ${avatar_autor_url || null},
-        NOW(), NOW()
+        ${new Date()}, ${new Date()}, ${categoria || null}
       )
       RETURNING *;
     `;
@@ -382,15 +384,22 @@ app.post('/api/dietas', verifyToken, async (req, res) => {
   }
 });
 
-// Rota: Listar dietas do usuário
+// ROTA PARA LISTAR DIETAS
 app.get('/api/dietas', verifyToken, async (req, res) => {
   console.log('Rota GET /api/dietas atingida');
   const userId = req.userId; // userId é um INTEGER aqui
+  const { categoria } = req.query; // Pega o parâmetro categoria da query
 
   try {
-    const dietas = await sql`
-      SELECT * FROM dietas WHERE id_us = ${userId} ORDER BY createdat DESC;
-    `;
+    let query = sql`SELECT id_us, nome, descricao, imageurl, calorias, tempo_preparo, gordura, proteina, carboidratos, nome_autor, avatar_autor_url, createdat, updatedat, categoria, id_dieta FROM dietas WHERE id_us = ${userId}`;
+
+    if (categoria) {
+      query = sql`${query} AND categoria = ${categoria}`;
+    }
+
+    query = sql`${query} ORDER BY createdat DESC;`;
+
+    const dietas = await query;
     res.status(200).json({ data: dietas });
   } catch (error) {
     console.error('Erro ao listar dietas:', error);
@@ -398,7 +407,7 @@ app.get('/api/dietas', verifyToken, async (req, res) => {
   }
 });
 
-// Rota: Editar uma dieta
+// ROTA PARA EDITAR DIETAS
 app.put('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
   console.log('Rota PUT /api/dietas/:id_dieta atingida');
   const userId = req.userId; // userId é um INTEGER aqui
@@ -419,7 +428,8 @@ app.put('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
         carboidratos = COALESCE(${updateFields.carboidratos || null}, carboidratos),
         nome_autor = COALESCE(${updateFields.nome_autor || null}, nome_autor),
         avatar_autor_url = COALESCE(${updateFields.avatar_autor_url || null}, avatar_autor_url),
-        updatedat = NOW()
+        categoria = COALESCE(${updateFields.categoria || null}, categoria),
+        updatedat = ${new Date()}
       WHERE id_dieta = ${id_dieta} AND id_us = ${userId}
       RETURNING *;
     `;
@@ -434,7 +444,7 @@ app.put('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
   }
 });
 
-// Rota: Excluir uma dieta
+// ROTA PARA EXCLUIR DIETAS
 app.delete('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
   console.log('Rota DELETE /api/dietas/:id_dieta atingida');
   const userId = req.userId; // userId é um INTEGER aqui
@@ -456,6 +466,8 @@ app.delete('/api/dietas/:id_dieta', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Erro interno do servidor ao excluir dieta.', details: error.message });
   }
 });
+
+// ---------------------------------------------------------------------- //
 
 // Rota: Listar todas as refeições do catálogo (mantida, pois pode ser um catálogo geral)
 app.get('/api/meals', verifyToken, async (req, res) => {
